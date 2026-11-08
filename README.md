@@ -82,6 +82,13 @@ Set **Base URL** to your server, for example `https://your-server.com`. The plug
 
 Requests include the device MAC under the header named in **MAC address header name** (`ID` by default). [Terminus](https://github.com/usetrmnl/terminus) and `byos_laravel` both read `id`, so the default works as-is. If your server expects something else, change the header name rather than patching the plugin.
 
+**Terminus behavior notes**
+
+Terminus is stricter than trmnl.app in two ways that make failures misleading:
+
+- `battery-charging` must be an integer (`1` or `0`). Word values such as `true`/`false` fail its header validation.
+- API-key and header validation failures come back as HTTP 404 with an `application/problem+json` body (for example `{"detail": "Invalid API key."}`), not 401/403. On Terminus, a 404 means the API key or a header value — not the base URL.
+
 ## Troubleshooting
 
 **"Device not found", or fetches that stopped working after you changed the MAC address**

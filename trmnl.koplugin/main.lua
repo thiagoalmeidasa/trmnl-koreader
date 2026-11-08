@@ -327,7 +327,8 @@ function TrmnlDisplay:fetchScreenMetadata()
     if Device:hasBattery() then
         local powerd = Device:getPowerDevice()
         percent_charged = tostring(powerd:getCapacity()) -- Returns 0-100 percentage
-        battery_charging = tostring(powerd:isCharging())
+        -- Send an integer: BYOS servers like Terminus reject Lua's "true"/"false" with HTTP 404
+        battery_charging = powerd:isCharging() and "1" or "0"
     end
     local rssi = self:getRssi()
 

@@ -51,8 +51,11 @@ GET https://trmnl.app/api/display
 |--------|-------------|---------|
 | `access-token` | User's API key | `abc123...` |
 | `percent-charged` | Battery % (0-100) | `85` |
+| `battery-charging` | Charging state, integer `1` or `0` | `1` |
 | `png-width` / `png-height` | Screen dimensions | `1448` / `1072` |
 | `rssi` | Wi-Fi signal in dBm, left out when unknown | `-63` |
+
+Note: `battery-charging` must stay an integer. BYOS servers like Terminus reject `true`/`false` (Lua's boolean string) with HTTP 404.
 
 
 ### Response
