@@ -16,6 +16,7 @@ Technical architecture, development setup, and extension guide for the TRMNL KOR
 - `main.lua` - Plugin implementation
 - `_meta.lua` - Plugin metadata
 - `apikey.txt` - Optional auto-configuration file
+- `models.json` - Bundled device model snapshot (see below)
 
 ### Lifecycle Hooks
 
@@ -99,6 +100,28 @@ See [KOReader build docs](https://github.com/koreader/koreader/blob/master/doc/B
 ## Extending the Plugin
 
 - main.lua is well-commented for expanding on implementation patterns
+
+## Device Model Snapshot
+
+`trmnl.koplugin/models.json` ships with the plugin and powers the **Device model**
+picker shown when registering a device. It is a reduced snapshot of
+`https://trmnl.com/api/models` (only `name` and `label` per model, sorted by label),
+annotated with the `snapshot_date` shown in the picker title.
+
+To refresh it:
+
+```bash
+curl -sS "https://trmnl.com/api/models" | python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+models = sorted(({"name": m["name"], "label": m["label"]} for m in payload["data"]),
+                key=lambda m: m["label"].lower())
+json.dump({"snapshot_date": "'$(date +%F)'", "models": models},
+          open("trmnl.koplugin/models.json", "w"), indent=2, ensure_ascii=False)
+open("trmnl.koplugin/models.json", "a").write("\n")
+'
+```
+
 
 ## Resources
 

@@ -465,4 +465,196 @@ describe("TRMNL display plugin", function()
             assert.same({ "notes.png" }, files_in(data_dir))
         end)
     end)
+
+    describe("device registration", function()
+        local lfs
+
+        setup(function()
+            lfs = require("libs/libkoreader-lfs")
+        end)
+
+        -- Captures the headers of a real fetchSetup call by standing in for the
+        -- HTTPS transport. The empty response body never parses, which is fine -
+        -- only the outgoing request is under test.
+        local function register_headers_for(settings, detected_mac)
+            local captured
+            local real_https = package.loaded["ssl.https"]
+            package.loaded["ssl.https"] = {
+                request = function(request) captured = request; return 1, 200 end,
+            }
+
+            settings.device_model = "amazon_kindle_paperwhite_7th_gen"
+            settings.base_url = "https://example.invalid"
+            local instance = setmetatable({
+                settings      = settings,
+                getMacAddress = function() return detected_mac end,
+            }, { __index = TrmnlDisplay })
+
+            instance:fetchSetup()
+            package.loaded["ssl.https"] = real_https
+            return captured.headers
+        end
+
+        it("sends the detected MAC under the ID header and the chosen model", function()
+            local headers = register_headers_for({}, "AA:BB:CC:DD:EE:FF")
+            assert.is_equal("AA:BB:CC:DD:EE:FF", headers["ID"])
+            assert.is_equal("amazon_kindle_paperwhite_7th_gen", headers["Model"])
+            assert.is_equal("application/json", headers["Content-Type"])
+        end)
+
+        it("omits the ID header when no MAC can be detected", function()
+            assert.is_nil(register_headers_for({}, nil)["ID"])
+        end)
+
+        it("prefers a manual MAC and honours a custom header name", function()
+            local headers = register_headers_for(
+                { mac_address = "11:22:33:44:55:66", mac_header_name = "MAC Address" },
+                "AA:BB:CC:DD:EE:FF")
+            assert.is_equal("11:22:33:44:55:66", headers["MAC Address"])
+            assert.is_nil(headers["ID"])
+        end)
+
+        -- Drives _performRegistration with a canned setup response and returns
+        -- the instance plus the messages shown and keys saved.
+        local function register_with(response, err)
+            local shown, saved = {}, {}
+            local instance = setmetatable({
+                settings         = {},
+                fetchSetup       = function() return response, err end,
+                saveApiKeyToFile = function(_, key) table.insert(saved, key) return true end,
+                saveSettings     = function() end,
+                showError        = function(_, message) table.insert(shown, message) end,
+                showSuccess      = function(_, message) table.insert(shown, message) end,
+            }, { __index = TrmnlDisplay })
+
+            instance:_performRegistration()
+            return instance, shown, saved
+        end
+
+        it("stores the api key and reports success", function()
+            local instance, shown, saved = register_with({ status = 200, api_key = "new-key" })
+            assert.same({ "new-key" }, saved)
+            assert.is_equal("new-key", instance.settings.api_key)
+            assert.same({ "Device registered. API key saved." }, shown)
+        end)
+
+        it("refuses an empty api key (device already set up)", function()
+            local instance, shown, saved = register_with({ status = 200, api_key = "" })
+            assert.same({}, saved)
+            assert.is_nil(instance.settings.api_key)
+            assert.same({ "Server returned no API key. The device may already be set up on that server." }, shown)
+        end)
+
+        it("surfaces the server's refusal", function()
+            local _, shown, saved = register_with({ status = 500, error = "Device not found" })
+            assert.same({}, saved)
+            assert.same({ "Registration failed: Device not found" }, shown)
+        end)
+
+        it("surfaces a body without a status", function()
+            local _, shown = register_with({ error = "boom" })
+            assert.same({ "Registration failed: boom" }, shown)
+        end)
+
+        it("reports transport failures", function()
+            local _, shown, saved = register_with(nil, "Failed to reach the server: timeout")
+            assert.same({}, saved)
+            assert.same({ "Failed to reach the server: timeout" }, shown)
+        end)
+
+        it("reports when the key cannot be saved", function()
+            local shown = {}
+            local instance = setmetatable({
+                settings         = {},
+                fetchSetup       = function() return { status = 200, api_key = "new-key" } end,
+                saveApiKeyToFile = function() return false end,
+                saveSettings     = function() end,
+                showError        = function(_, message) table.insert(shown, message) end,
+            }, { __index = TrmnlDisplay })
+
+            instance:_performRegistration()
+            assert.same({ "Registration succeeded but could not save apikey.txt" }, shown)
+            assert.is_nil(instance.settings.api_key)
+        end)
+
+        it("writes the api key to apikey.txt in the plugin directory", function()
+            local dir = os.tmpname()
+            os.remove(dir)
+            lfs.mkdir(dir)
+            local instance = setmetatable({ getPluginDir = function() return dir .. "/" end },
+                { __index = TrmnlDisplay })
+
+            assert.is_true(instance:saveApiKeyToFile("file-key"))
+            local file = io.open(dir .. "/apikey.txt", "r")
+            local content = file:read("*all")
+            file:close()
+            os.execute("rm -rf '" .. dir .. "'")
+            assert.is_equal("file-key", content:match("^%s*(.-)%s*$"))
+        end)
+    end)
+
+    describe("model snapshot", function()
+        local lfs
+
+        setup(function()
+            lfs = require("libs/libkoreader-lfs")
+        end)
+
+        local function instance_with_snapshot(dir, json)
+            os.remove(dir)
+            lfs.mkdir(dir)
+            local file = io.open(dir .. "/models.json", "w")
+            file:write(json)
+            file:close()
+            return setmetatable({ getPluginDir = function() return dir .. "/" end },
+                { __index = TrmnlDisplay })
+        end
+
+        it("loads the bundled snapshot with its date annotation", function()
+            local dir = os.tmpname()
+            local instance = instance_with_snapshot(dir,
+                '{"snapshot_date":"2026-11-11","models":[{"name":"v2","label":"TRMNL X"}]}')
+
+            local snapshot = instance:loadModelsSnapshot()
+            os.execute("rm -rf '" .. dir .. "'")
+            assert.is_equal("2026-11-11", snapshot.snapshot_date)
+            assert.is_equal("v2", snapshot.models[1].name)
+        end)
+
+        it("returns nil for a missing snapshot", function()
+            local instance = setmetatable({ getPluginDir = function() return "/nonexistent/" end },
+                { __index = TrmnlDisplay })
+            assert.is_nil(instance:loadModelsSnapshot())
+        end)
+
+        it("returns nil for a corrupt snapshot", function()
+            local dir = os.tmpname()
+            local instance = instance_with_snapshot(dir, "not json")
+
+            local snapshot = instance:loadModelsSnapshot()
+            os.execute("rm -rf '" .. dir .. "'")
+            assert.is_nil(snapshot)
+        end)
+
+        it("marks the stored selection and stores a new one", function()
+            local stored
+            local instance = setmetatable({
+                settings = { device_model = "v2" },
+                saveSettings = function(self) stored = self.settings.device_model end,
+            }, { __index = TrmnlDisplay })
+
+            local items = instance:buildModelItems({
+                snapshot_date = "2026-11-11",
+                models = {
+                    { name = "og_png", label = "TRMNL OG" },
+                    { name = "v2", label = "TRMNL X" },
+                },
+            })
+            assert.is_equal(2, #items)
+            assert.is_false(items[1].checked_func())
+            assert.is_true(items[2].checked_func())
+            items[1]:callback() -- SortWidget invokes the callback with the item
+            assert.is_equal("og_png", stored)
+        end)
+    end)
 end)

@@ -5,6 +5,7 @@ Fetches and displays personalized screens from the TRMNL API.
 Supports automatic periodic refresh, full-screen display, and WiFi management.
 ]]
 
+local ConfirmBox = require("ui/widget/confirmbox")
 local DataStorage = require("datastorage")
 local Device = require("device")
 local Geom = require("ui/geometry")
@@ -18,6 +19,7 @@ local NetworkMgr = require("ui/network/manager")
 local RenderImage = require("ui/renderimage")
 local Screen = Device.screen
 local Input = Device.input
+local SortWidget = require("ui/widget/sortwidget")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Dispatcher = require("dispatcher")
@@ -88,12 +90,14 @@ TrmnlDisplay.CONSTANTS = {
         DEFAULT_IMAGE = "trmnl_screen.png",
         SCREENS_FOLDER = "trmnl-screens",
         API_KEY = "apikey.txt",
+        MODELS_SNAPSHOT = "models.json",
     }
 }
 
 TrmnlDisplay.default_settings = {
     api_key = nil,
     base_url = "https://trmnl.app",
+    device_model = nil,  -- Model name sent to the server when registering
     refresh_interval = 1800,
     refresh_type = "ui",
     show_notifications = true,
@@ -211,6 +215,65 @@ function TrmnlDisplay:loadApiKeyFromFile()
 end
 
 --[[--
+Save API key to apikey.txt in the plugin directory.
+
+init() auto-loads this file on startup, so the key survives KOReader restarts
+without depending on the settings file.
+
+@tparam string api_key The key to persist
+@treturn boolean Whether the file was written
+]]
+function TrmnlDisplay:saveApiKeyToFile(api_key)
+    local plugin_dir = self:getPluginDir()
+    if not plugin_dir then
+        return false
+    end
+
+    local file = io.open(plugin_dir .. self.CONSTANTS.FILES.API_KEY, "w")
+    if not file then
+        logger.err("TRMNL: Failed to open apikey.txt for writing")
+        return false
+    end
+
+    file:write(api_key, "\n")
+    file:close()
+    logger.info("TRMNL: API key saved to file")
+    return true
+end
+
+--[[--
+Load the bundled device model snapshot (models.json in the plugin directory).
+
+The snapshot ships with the plugin and is regenerated from
+https://trmnl.com/api/models during development (see DEVELOPMENT.md).
+
+@treturn table|nil Decoded snapshot ({ snapshot_date, models }) or nil on error
+]]
+function TrmnlDisplay:loadModelsSnapshot()
+    local plugin_dir = self:getPluginDir()
+    if not plugin_dir then
+        return nil
+    end
+
+    local file = io.open(plugin_dir .. self.CONSTANTS.FILES.MODELS_SNAPSHOT, "r")
+    if not file then
+        return nil
+    end
+
+    local content = file:read("*all")
+    file:close()
+
+    local JSON = require("json")
+    local ok, snapshot = pcall(JSON.decode, content)
+    if not ok or not snapshot or not snapshot.models then
+        logger.err("TRMNL: Failed to parse model snapshot")
+        return nil
+    end
+
+    return snapshot
+end
+
+--[[--
 Get MAC address of the wireless network interface.
 
 Uses FFI (Foreign Function Interface) to call POSIX system calls:
@@ -254,6 +317,26 @@ function TrmnlDisplay:getMacAddress()
  
     logger.info("TRMNL: No wireless interface MAC address found")
     return nil
+end
+
+--[[--
+Resolve the MAC address to identify this device with the server.
+
+Manual entry wins (if not empty), otherwise auto-detect. Staying nil drops the
+header from the request entirely: claiming a made-up MAC is worse than claiming none.
+
+@treturn string|nil MAC address, or nil when undetectable and not configured
+]]
+function TrmnlDisplay:resolveMacAddress()
+    local manual_mac = self.settings.mac_address
+    if manual_mac and manual_mac ~= "" then
+        logger.dbg("TRMNL: Using manual MAC address:", manual_mac)
+        return manual_mac
+    end
+
+    local mac_address = self:getMacAddress()
+    logger.dbg("TRMNL: Using MAC address:", mac_address or "(none detected)")
+    return mac_address
 end
 
 --[[--
@@ -337,22 +420,8 @@ function TrmnlDisplay:fetchScreenMetadata()
     local png_width = tostring(Screen:getWidth())
     local png_height = tostring(Screen:getHeight())
 
-    -- Get MAC address: manual entry wins (if not empty), otherwise auto-detect
-    local mac_address
-    local manual_mac = self.settings.mac_address
-    if manual_mac and manual_mac ~= "" then
-        -- Manual MAC provided - use it
-        mac_address = manual_mac
-        logger.dbg("TRMNL: Using manual MAC address:", mac_address)
-    else
-        -- No manual MAC or empty string - try auto-detection.
-        -- Staying nil drops the header from the table constructor below, which is
-        -- what we want: claiming a made-up MAC is worse than claiming none.
-        mac_address = self:getMacAddress()
-        logger.dbg("TRMNL: Using MAC address:", mac_address or "(none detected)")
-    end
-
-    -- Get custom header name for MAC address
+    -- Get MAC address (manual entry wins, else auto-detect) and header name
+    local mac_address = self:resolveMacAddress()
     local mac_header_name = self.settings.mac_header_name or "ID"
 
     logger.info("TRMNL: Fetching screen from", request_url)
@@ -416,6 +485,159 @@ function TrmnlDisplay:fetchScreenMetadata()
     end
 
     return response
+end
+
+--[[--
+Fetch device setup (auto-provisioning) from the configured server.
+
+Makes HTTP GET request to /api/setup endpoint with headers:
+- ID (or custom name): Device MAC address
+- Model: Selected device model name
+- Content-Type: application/json
+- User-Agent: Plugin version string
+
+@treturn table|nil Decoded JSON response table, or nil on error
+]]
+function TrmnlDisplay:fetchSetup()
+    local http = require("socket.http")
+    local https = require("ssl.https")
+    local JSON = require("json")
+    local socketutil = require("socketutil")
+
+    local sink = {}
+    local request_url = self.settings.base_url .. "/api/setup"
+
+    local mac_address = self:resolveMacAddress()
+    local mac_header_name = self.settings.mac_header_name or "ID"
+
+    logger.info("TRMNL: Registering device at", request_url)
+    logger.dbg("TRMNL: MAC:", mac_address or "(none)", "model:", self.settings.device_model)
+
+    local request = {
+        url = request_url,
+        method = "GET",
+        headers = {
+            [mac_header_name] = mac_address,           -- Device MAC address
+            ["Model"] = self.settings.device_model,    -- Device model name
+            ["Content-Type"] = "application/json",
+            ["User-Agent"] = self.USER_AGENT,          -- Plugin identification
+        },
+        sink = socketutil.table_sink(sink),
+        protocol = "any",
+        options = { "all", "no_sslv2", "no_sslv3" },
+        verify = "none", -- Skip certificate verification (required for Kindles)
+    }
+
+    local httpx = request_url:match("^https://") and https or http
+    socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
+    local success_code, status_code = httpx.request(request)
+    socketutil:reset_timeout()
+
+    if not success_code or success_code ~= 1 then
+        logger.err("TRMNL: Registration request failed:", status_code)
+        return nil, T(_("Failed to reach the server: %1"), tostring(status_code))
+    end
+
+    if status_code ~= 200 then
+        logger.err("TRMNL: Setup API returned HTTP", status_code)
+        local hint = status_code == 404 and ": check the base URL" or ""
+        return nil, "Server returned HTTP " .. tostring(status_code) .. hint
+    end
+
+    local ok, response = pcall(JSON.decode, table.concat(sink))
+    if not ok or not response then
+        logger.err("TRMNL: Failed to parse setup response")
+        return nil, "The server's response is not JSON: check the base URL"
+    end
+
+    return response
+end
+
+--[[--
+Register this device with the configured server (BYOS auto-provisioning).
+
+Terminus-style servers provision a device on GET /api/setup when it presents a
+MAC address under the ID header, and answer with an API key (see _performRegistration).
+
+Requires a chosen device model, a base URL, and a resolvable MAC address.
+]]
+function TrmnlDisplay:registerDevice()
+    if not self.settings.device_model or self.settings.device_model == "" then
+        self:showError("Pick a device model first.")
+        return
+    end
+
+    if not self.settings.base_url or self.settings.base_url == "" then
+        self:showError("Set the server base URL in Configure TRMNL first.")
+        return
+    end
+
+    if not self:resolveMacAddress() then
+        self:showError("No MAC address available. Set one in Configure TRMNL.")
+        return
+    end
+
+    self:showProgress("Registering device...", self.settings.base_url)
+    NetworkMgr:runWhenConnected(function()
+        self:_doRegister()
+    end)
+end
+
+--[[--
+Internal registration implementation that runs after WiFi is confirmed connected.
+Separated from registerDevice to work with NetworkMgr:runWhenConnected(), same
+stabilization delay as _doFetchAndDisplay.
+]]
+function TrmnlDisplay:_doRegister()
+    logger.info("TRMNL: WiFi connected, waiting 2 seconds for network to stabilize...")
+    UIManager:scheduleIn(2, function()
+        self:_performRegistration()
+    end)
+end
+
+--[[--
+Perform the actual registration request and persist the returned API key.
+
+Per the Terminus API docs, the api_key in the setup response is an empty string
+when the device has already been set up, which we report instead of overwriting
+the stored key with nothing.
+]]
+function TrmnlDisplay:_performRegistration()
+    local response, err = self:fetchSetup()
+    if not response then
+        self:showError(err)
+        NetworkMgr:afterWifiAction()
+        return
+    end
+
+    if response.status ~= 200 then
+        local detail = response.error
+            or (response.status and "status " .. tostring(response.status))
+            or "unexpected response"
+        logger.err("TRMNL: Registration refused:", detail)
+        self:showError("Registration failed: " .. detail)
+        NetworkMgr:afterWifiAction()
+        return
+    end
+
+    if not response.api_key or response.api_key == "" then
+        logger.err("TRMNL: Server returned no api_key (device already set up?)")
+        self:showError("Server returned no API key. The device may already be set up on that server.")
+        NetworkMgr:afterWifiAction()
+        return
+    end
+
+    if not self:saveApiKeyToFile(response.api_key) then
+        self:showError("Registration succeeded but could not save apikey.txt")
+        NetworkMgr:afterWifiAction()
+        return
+    end
+    self.settings.api_key = response.api_key
+    self:saveSettings()
+
+    logger.info("TRMNL: Device registered, API key stored")
+    self:showSuccess("Device registered. API key saved.")
+    NetworkMgr:afterWifiAction()
 end
 
 function TrmnlDisplay:downloadImage(image_url, filepath)
@@ -1066,6 +1288,98 @@ function TrmnlDisplay:showConfigDialog()
     UIManager:show(self.config_dialog)
 end
 
+--[[--
+Resolve the display label for a model name, falling back to the raw name.
+]]
+function TrmnlDisplay:modelLabel(name, snapshot)
+    if not name then
+        return nil
+    end
+    if snapshot then
+        for _, model in ipairs(snapshot.models) do
+            if model.name == name then
+                return model.label or name
+            end
+        end
+    end
+    return name
+end
+
+--[[--
+Build picker items from a models snapshot, one item per model.
+
+Each item shows a checkmark when its model is the stored selection; tapping it
+stores the model name (sent as the Model header when registering).
+
+@tparam table snapshot Decoded models snapshot ({ snapshot_date, models })
+@treturn table Array of SortWidget item tables
+]]
+function TrmnlDisplay:buildModelItems(snapshot)
+    local items = {}
+    for _, model in ipairs(snapshot.models) do
+        local name = model.name
+        table.insert(items, {
+            text = model.label or name,
+            checked_func = function()
+                return self.settings.device_model == name
+            end,
+            callback = function()
+                logger.info("TRMNL: Device model selected:", name)
+                self.settings.device_model = name
+                self:saveSettings()
+            end,
+        })
+    end
+    return items
+end
+
+--[[--
+Show the device model picker.
+
+The list comes from the snapshot bundled with the plugin (models.json); the
+snapshot date is annotated in the dialog title. Uses SortWidget as a
+single-choice picker (sort_disabled), so tapping a model moves the checkmark
+and the footer check button closes the dialog.
+]]
+function TrmnlDisplay:showModelPicker()
+    local snapshot = self:loadModelsSnapshot()
+    if not snapshot then
+        self:showError("Model list missing or unreadable. Reinstall the plugin.")
+        return
+    end
+
+    UIManager:show(SortWidget:new {
+        title = T(_("Device model (list from %1)"), snapshot.snapshot_date or _("unknown date")),
+        item_table = self:buildModelItems(snapshot),
+        sort_disabled = true,
+    })
+end
+
+--[[--
+Ask for confirmation, then register the device with the configured server.
+]]
+function TrmnlDisplay:showRegisterConfirm()
+    if not self.settings.device_model or self.settings.device_model == "" then
+        self:showInfo("Pick a device model first.")
+        self:showModelPicker()
+        return
+    end
+
+    local snapshot = self:loadModelsSnapshot()
+    local model_label = self:modelLabel(self.settings.device_model, snapshot)
+
+    UIManager:show(ConfirmBox:new {
+        text = T(_("Register this device with %1?\n\nMAC: %2\nModel: %3"),
+            self.settings.base_url,
+            self:resolveMacAddress() or _("(none detected)"),
+            model_label),
+        ok_text = _("Register"),
+        ok_callback = function()
+            self:registerDevice()
+        end,
+    })
+end
+
 --============================================================================--
 -- Menu Builders
 --============================================================================--
@@ -1137,6 +1451,32 @@ function TrmnlDisplay:createConfigMenuItem()
     }
 end
 
+function TrmnlDisplay:createRegisterMenuItem()
+    return {
+        text = _("Register device (BYOS)"),
+        keep_menu_open = true,
+        callback = function()
+            self:showRegisterConfirm()
+        end
+    }
+end
+
+function TrmnlDisplay:createModelMenuItem()
+    return {
+        text_func = function()
+            local snapshot = self:loadModelsSnapshot()
+            local label = self:modelLabel(self.settings.device_model, snapshot)
+            local annotation = snapshot and snapshot.snapshot_date
+                and T(_(" (list from %1)"), snapshot.snapshot_date) or ""
+            return T(_("Device model: %1%2"), label or _("not chosen"), annotation)
+        end,
+        keep_menu_open = true,
+        callback = function()
+            self:showModelPicker()
+        end
+    }
+end
+
 function TrmnlDisplay:createAutoRefreshToggle()
     return self:createToggleMenuItem(
         "Stop dashboard",
@@ -1183,6 +1523,8 @@ function TrmnlDisplay:addToMainMenu(menu_items)
         sub_item_table = {
             self:createFetchMenuItem(),
             self:createConfigMenuItem(),
+            self:createRegisterMenuItem(),
+            self:createModelMenuItem(),
             self:createAutoRefreshToggle(),
             self:createNotificationsToggle(),
             {

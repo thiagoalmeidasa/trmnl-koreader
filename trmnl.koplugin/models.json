@@ -1,0 +1,249 @@
+{
+  "snapshot_date": "2026-11-11",
+  "models": [
+    {
+      "name": "amazon_kindle_2024",
+      "label": "Amazon Kindle 2024"
+    },
+    {
+      "name": "amazon_kindle_7",
+      "label": "Amazon Kindle 7"
+    },
+    {
+      "name": "amazon_kindle_oasis_2",
+      "label": "Amazon Kindle Oasis 2"
+    },
+    {
+      "name": "amazon_kindle_paperwhite_6th_gen",
+      "label": "Amazon Kindle PW 6th Gen"
+    },
+    {
+      "name": "amazon_kindle_paperwhite_7th_gen",
+      "label": "Amazon Kindle PW 7th Gen"
+    },
+    {
+      "name": "amazon_kindle_paperwhite_signature_11th_gen",
+      "label": "Amazon Kindle PW Signature 11th Gen"
+    },
+    {
+      "name": "amazon_kindle_scribe",
+      "label": "Amazon Kindle Scribe"
+    },
+    {
+      "name": "amazon_kindle_voyage",
+      "label": "Amazon Kindle Voyage"
+    },
+    {
+      "name": "avalue_epd_42s",
+      "label": "Avalue EPD-42S 42\" Display Board"
+    },
+    {
+      "name": "byod_custom",
+      "label": "Custom Device"
+    },
+    {
+      "name": "ed133ut2",
+      "label": "ED133UT2 Active Matrix"
+    },
+    {
+      "name": "generic_16_9",
+      "label": "Generic 16:9 Display"
+    },
+    {
+      "name": "inkplate_10",
+      "label": "Inkplate 10"
+    },
+    {
+      "name": "inkplate_13_spectra",
+      "label": "Inkplate 13 Spectra"
+    },
+    {
+      "name": "inkplate_5_2",
+      "label": "Inkplate 5.2"
+    },
+    {
+      "name": "inkplate_6_plus",
+      "label": "Inkplate 6 Plus"
+    },
+    {
+      "name": "inkplate_6_color",
+      "label": "Inkplate 6COLOR"
+    },
+    {
+      "name": "inky_impression_13_3",
+      "label": "Inky Impression 13.3"
+    },
+    {
+      "name": "inky_impression_7_3",
+      "label": "Inky Impression 7.3"
+    },
+    {
+      "name": "joan_13",
+      "label": "Joan 13"
+    },
+    {
+      "name": "kobo_aura_h2o_2",
+      "label": "Kobo Aura H2O Edition 2"
+    },
+    {
+      "name": "kobo_aura_hd",
+      "label": "Kobo Aura HD"
+    },
+    {
+      "name": "kobo_aura_one",
+      "label": "Kobo Aura One"
+    },
+    {
+      "name": "kobo_clara_2e",
+      "label": "Kobo Clara 2E"
+    },
+    {
+      "name": "kobo_forma",
+      "label": "Kobo Forma"
+    },
+    {
+      "name": "kobo_glo",
+      "label": "Kobo Glo"
+    },
+    {
+      "name": "kobo_libra_2",
+      "label": "Kobo Libra 2"
+    },
+    {
+      "name": "kobo_libra_color",
+      "label": "Kobo Libra Color"
+    },
+    {
+      "name": "kobo_sage",
+      "label": "Kobo Sage"
+    },
+    {
+      "name": "kobo_touch",
+      "label": "Kobo Touch"
+    },
+    {
+      "name": "m5_paper_s3",
+      "label": "M5PaperS3"
+    },
+    {
+      "name": "meta_portal",
+      "label": "Meta Portal"
+    },
+    {
+      "name": "nook_simple_touch",
+      "label": "Nook Simple Touch"
+    },
+    {
+      "name": "onyx_boox_go_10_3_lumi",
+      "label": "Onyx BOOX Go 10.3 (Gen II) Lumi"
+    },
+    {
+      "name": "onyx_boox_go_7",
+      "label": "Onyx BOOX Go 7"
+    },
+    {
+      "name": "onxy_boox_nova_air_c",
+      "label": "Onyx BOOX Nova Air C"
+    },
+    {
+      "name": "palma",
+      "label": "Onyx BOOX Palma"
+    },
+    {
+      "name": "onyx_boox_poke_5",
+      "label": "Onyx BOOX Poke 5"
+    },
+    {
+      "name": "openframe",
+      "label": "OpenPeak OpenFrame"
+    },
+    {
+      "name": "playdate",
+      "label": "Playdate"
+    },
+    {
+      "name": "raspberry_pi_touch_2",
+      "label": "Raspberry Pi Touch 2"
+    },
+    {
+      "name": "remarkable_paper_2",
+      "label": "reMarkable 2"
+    },
+    {
+      "name": "seeed_e1001",
+      "label": "Seeed E1001 Monochrome"
+    },
+    {
+      "name": "seeed_e1002",
+      "label": "Seeed E1002"
+    },
+    {
+      "name": "seeed_e1003",
+      "label": "Seeed E1003 (4-bit)"
+    },
+    {
+      "name": "seeed_e1004",
+      "label": "Seeed E1004"
+    },
+    {
+      "name": "seeed_sticky",
+      "label": "Seeed Sticky"
+    },
+    {
+      "name": "tcl_nxtpaper_14",
+      "label": "TCL NxtPaper 14"
+    },
+    {
+      "name": "tidbyt",
+      "label": "Tidbyt"
+    },
+    {
+      "name": "og_png",
+      "label": "TRMNL OG (1-bit)"
+    },
+    {
+      "name": "og_plus",
+      "label": "TRMNL OG (2-bit)"
+    },
+    {
+      "name": "og_bwry",
+      "label": "TRMNL OG (B/W/R/Y)"
+    },
+    {
+      "name": "v2",
+      "label": "TRMNL X"
+    },
+    {
+      "name": "vestaboard",
+      "label": "Vestaboard"
+    },
+    {
+      "name": "waveshare_4_26",
+      "label": "Waveshare 4.26\" (2-bit)"
+    },
+    {
+      "name": "waveshare_5_8_bw",
+      "label": "Waveshare 5.83\" (Steam Machine)"
+    },
+    {
+      "name": "waveshare_7_5_bw",
+      "label": "Waveshare 7.5\" B/W"
+    },
+    {
+      "name": "waveshare_7_5_bwr",
+      "label": "Waveshare 7.5\" B/W/R"
+    },
+    {
+      "name": "waveshare_7_5_bwry",
+      "label": "Waveshare 7.5\" B/W/R/Y"
+    },
+    {
+      "name": "xteink_x3",
+      "label": "Xteink X3"
+    },
+    {
+      "name": "xteink_x4",
+      "label": "Xteink X4"
+    }
+  ]
+}
