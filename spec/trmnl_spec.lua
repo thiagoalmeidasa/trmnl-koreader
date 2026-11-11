@@ -514,6 +514,40 @@ describe("TRMNL display plugin", function()
             assert.is_nil(headers["ID"])
         end)
 
+        -- Captures the headers of a real verifyApiKey call by standing in for
+        -- the HTTPS transport.
+        local function verify_headers_for(settings, detected_mac)
+            local captured
+            local real_https = package.loaded["ssl.https"]
+            package.loaded["ssl.https"] = {
+                request = function(request) captured = request; return 1, 200 end,
+            }
+
+            settings.base_url = "https://example.invalid"
+            local instance = setmetatable({
+                settings      = settings,
+                getMacAddress = function() return detected_mac end,
+            }, { __index = TrmnlDisplay })
+
+            assert.is_true(instance:verifyApiKey("test-key"))
+            package.loaded["ssl.https"] = real_https
+            return captured.headers
+        end
+
+        it("sends the MAC under the ID header when verifying the api key", function()
+            local headers = verify_headers_for({}, "AA:BB:CC:DD:EE:FF")
+            assert.is_equal("AA:BB:CC:DD:EE:FF", headers["ID"])
+            assert.is_equal("test-key", headers["access-token"])
+        end)
+
+        it("prefers a manual MAC and honours a custom header name when verifying", function()
+            local headers = verify_headers_for(
+                { mac_address = "11:22:33:44:55:66", mac_header_name = "MAC Address" },
+                "AA:BB:CC:DD:EE:FF")
+            assert.is_equal("11:22:33:44:55:66", headers["MAC Address"])
+            assert.is_nil(headers["ID"])
+        end)
+
         -- Drives _performRegistration with a canned setup response and returns the
         -- instance plus the messages shown and keys saved. The new key always
         -- passes verification unless the response/err pair says otherwise; pass

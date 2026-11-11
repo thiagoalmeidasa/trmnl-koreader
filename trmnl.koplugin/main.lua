@@ -340,6 +340,18 @@ function TrmnlDisplay:resolveMacAddress()
 end
 
 --[[--
+Resolve the MAC header pair sent with every API request: the header name
+(configurable for BYOS servers, defaults to ID) and the MAC address (manual
+entry wins, else auto-detect).
+
+@treturn string Header name
+@treturn string|nil MAC address, nil when none can be resolved
+]]
+function TrmnlDisplay:macRequestHeader()
+    return self.settings.mac_header_name or "ID", self:resolveMacAddress()
+end
+
+--[[--
 Read the Wi-Fi signal level from the kernel's wireless statistics.
 
 @treturn number|nil Signal level in dBm, or nil when unknown
@@ -421,8 +433,7 @@ function TrmnlDisplay:fetchScreenMetadata()
     local png_height = tostring(Screen:getHeight())
 
     -- Get MAC address (manual entry wins, else auto-detect) and header name
-    local mac_address = self:resolveMacAddress()
-    local mac_header_name = self.settings.mac_header_name or "ID"
+    local mac_header_name, mac_address = self:macRequestHeader()
 
     logger.info("TRMNL: Fetching screen from", request_url)
     logger.dbg("TRMNL: Screen dimensions:", png_width, "x", png_height)
@@ -507,8 +518,7 @@ function TrmnlDisplay:fetchSetup()
     local sink = {}
     local request_url = self.settings.base_url .. "/api/setup"
 
-    local mac_address = self:resolveMacAddress()
-    local mac_header_name = self.settings.mac_header_name or "ID"
+    local mac_header_name, mac_address = self:macRequestHeader()
 
     logger.info("TRMNL: Registering device at", request_url)
     logger.dbg("TRMNL: MAC:", mac_address or "(none)", "model:", self.settings.device_model)
@@ -598,8 +608,9 @@ end
 --[[--
 Verify an API key against the configured server before it is persisted.
 
-Makes a minimal authenticated HTTP GET request to /api/display with only the
-access-token header (unlike fetchScreenMetadata, no device metadata headers).
+Makes a minimal authenticated HTTP GET request to /api/display with the
+access-token header and the device MAC under the ID header (or the custom
+header name) - BYOS servers like Terminus reject /api/display without it.
 
 Must run while WiFi is held (i.e. before NetworkMgr:afterWifiAction()), since
 it performs a network request.
@@ -616,6 +627,9 @@ function TrmnlDisplay:verifyApiKey(api_key)
     local sink = {}
     local request_url = self.settings.base_url .. "/api/display"
 
+    -- Get MAC address (manual entry wins, else auto-detect) and header name
+    local mac_header_name, mac_address = self:macRequestHeader()
+
     logger.info("TRMNL: Verifying API key against", request_url)
 
     local request = {
@@ -623,6 +637,7 @@ function TrmnlDisplay:verifyApiKey(api_key)
         method = "GET",
         headers = {
             ["access-token"] = api_key,                -- TRMNL API authentication
+            [mac_header_name] = mac_address,           -- MAC address with custom header name
             ["User-Agent"] = self.USER_AGENT,          -- Plugin identification
         },
         sink = socketutil.table_sink(sink),
