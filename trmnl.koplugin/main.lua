@@ -596,11 +596,90 @@ function TrmnlDisplay:_doRegister()
 end
 
 --[[--
+Verify an API key against the configured server before it is persisted.
+
+Makes a minimal authenticated HTTP GET request to /api/display with only the
+access-token header (unlike fetchScreenMetadata, no device metadata headers).
+
+Must run while WiFi is held (i.e. before NetworkMgr:afterWifiAction()), since
+it performs a network request.
+
+@tparam string api_key The key to verify
+@treturn boolean|nil true when the server accepted the key, nil otherwise
+@treturn string|nil Error message when verification failed
+]]
+function TrmnlDisplay:verifyApiKey(api_key)
+    local http = require("socket.http")
+    local https = require("ssl.https")
+    local socketutil = require("socketutil")
+
+    local sink = {}
+    local request_url = self.settings.base_url .. "/api/display"
+
+    logger.info("TRMNL: Verifying API key against", request_url)
+
+    local request = {
+        url = request_url,
+        method = "GET",
+        headers = {
+            ["access-token"] = api_key,                -- TRMNL API authentication
+            ["User-Agent"] = self.USER_AGENT,          -- Plugin identification
+        },
+        sink = socketutil.table_sink(sink),
+        protocol = "any",
+        options = { "all", "no_sslv2", "no_sslv3" },
+        verify = "none", -- Skip certificate verification (required for Kindles)
+    }
+
+    local httpx = request_url:match("^https://") and https or http
+    socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
+    local success_code, status_code = httpx.request(request)
+    socketutil:reset_timeout()
+
+    if not success_code or success_code ~= 1 then
+        logger.err("TRMNL: API key verification request failed:", status_code)
+        return nil, T(_("Failed to reach the server: %1"), tostring(status_code))
+    end
+
+    if status_code ~= 200 then
+        logger.err("TRMNL: API key verification returned HTTP", status_code)
+        return nil, "Server returned HTTP " .. tostring(status_code)
+    end
+
+    logger.info("TRMNL: API key verified")
+    return true
+end
+
+--[[--
+Persist a freshly registered API key: write apikey.txt, store it in settings.
+
+Only called after the key has been verified against the server and, when a
+key was already stored, the user confirmed the replacement.
+]]
+function TrmnlDisplay:_saveRegisteredKey(api_key)
+    if not self:saveApiKeyToFile(api_key) then
+        self:showError("Registration succeeded but could not save apikey.txt")
+        NetworkMgr:afterWifiAction()
+        return
+    end
+    self.settings.api_key = api_key
+    self:saveSettings()
+
+    logger.info("TRMNL: Device registered, API key stored")
+    self:showSuccess("Device registered. API key saved.")
+    NetworkMgr:afterWifiAction()
+end
+
+--[[--
 Perform the actual registration request and persist the returned API key.
 
 Per the Terminus API docs, the api_key in the setup response is an empty string
 when the device has already been set up, which we report instead of overwriting
 the stored key with nothing.
+
+The new key is verified against the server before anything is written. When a
+key is already stored, the user is asked to confirm the replacement; a failed
+verification never reaches that prompt.
 ]]
 function TrmnlDisplay:_performRegistration()
     local response, err = self:fetchSetup()
@@ -627,17 +706,32 @@ function TrmnlDisplay:_performRegistration()
         return
     end
 
-    if not self:saveApiKeyToFile(response.api_key) then
-        self:showError("Registration succeeded but could not save apikey.txt")
+    local verified, verify_err = self:verifyApiKey(response.api_key)
+    if not verified then
+        logger.err("TRMNL: New API key failed verification:", verify_err)
+        self:showError("Registration failed: the server rejected the new API key (" .. verify_err .. ")")
         NetworkMgr:afterWifiAction()
         return
     end
-    self.settings.api_key = response.api_key
-    self:saveSettings()
 
-    logger.info("TRMNL: Device registered, API key stored")
-    self:showSuccess("Device registered. API key saved.")
-    NetworkMgr:afterWifiAction()
+    local existing_key = self.settings.api_key
+    if existing_key and existing_key ~= "" then
+        UIManager:show(ConfirmBox:new {
+            text = T(_("This will replace the existing API key with the one from %1?"),
+                self.settings.base_url),
+            ok_text = _("Replace"),
+            ok_callback = function()
+                self:_saveRegisteredKey(response.api_key)
+            end,
+            cancel_callback = function()
+                self:showInfo(T(_("Kept the existing API key. Registration cancelled.")))
+                NetworkMgr:afterWifiAction()
+            end,
+        })
+        return
+    end
+
+    self:_saveRegisteredKey(response.api_key)
 end
 
 function TrmnlDisplay:downloadImage(image_url, filepath)

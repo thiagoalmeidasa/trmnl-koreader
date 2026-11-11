@@ -514,16 +514,20 @@ describe("TRMNL display plugin", function()
             assert.is_nil(headers["ID"])
         end)
 
-        -- Drives _performRegistration with a canned setup response and returns
-        -- the instance plus the messages shown and keys saved.
-        local function register_with(response, err)
+        -- Drives _performRegistration with a canned setup response and returns the
+        -- instance plus the messages shown and keys saved. The new key always
+        -- passes verification unless the response/err pair says otherwise; pass
+        -- settings to give the instance a stored key.
+        local function register_with(response, err, settings)
             local shown, saved = {}, {}
             local instance = setmetatable({
-                settings         = {},
+                settings         = settings or {},
                 fetchSetup       = function() return response, err end,
+                verifyApiKey     = function() return true end,
                 saveApiKeyToFile = function(_, key) table.insert(saved, key) return true end,
                 saveSettings     = function() end,
                 showError        = function(_, message) table.insert(shown, message) end,
+                showInfo         = function(_, message) table.insert(shown, message) end,
                 showSuccess      = function(_, message) table.insert(shown, message) end,
             }, { __index = TrmnlDisplay })
 
@@ -567,6 +571,7 @@ describe("TRMNL display plugin", function()
             local instance = setmetatable({
                 settings         = {},
                 fetchSetup       = function() return { status = 200, api_key = "new-key" } end,
+                verifyApiKey     = function() return true end,
                 saveApiKeyToFile = function() return false end,
                 saveSettings     = function() end,
                 showError        = function(_, message) table.insert(shown, message) end,
@@ -575,6 +580,67 @@ describe("TRMNL display plugin", function()
             instance:_performRegistration()
             assert.same({ "Registration succeeded but could not save apikey.txt" }, shown)
             assert.is_nil(instance.settings.api_key)
+        end)
+
+        it("refuses to store a key the server rejects", function()
+            local shown, saved = {}, {}
+            local instance = setmetatable({
+                settings         = { api_key = "old-key" },
+                fetchSetup       = function() return { status = 200, api_key = "new-key" } end,
+                verifyApiKey     = function() return nil, "Server returned HTTP 401" end,
+                saveApiKeyToFile = function(_, key) table.insert(saved, key) return true end,
+                saveSettings     = function() end,
+                showError        = function(_, message) table.insert(shown, message) end,
+            }, { __index = TrmnlDisplay })
+
+            instance:_performRegistration()
+            assert.same({}, saved)
+            assert.is_equal("old-key", instance.settings.api_key)
+            assert.same({ "Registration failed: the server rejected the new API key (Server returned HTTP 401)" }, shown)
+        end)
+
+        -- Swaps UIManager:show for a capture function and returns the captured
+        -- widgets plus a restore function (luassert stub call-recording shape
+        -- varies, so capture explicitly instead of relying on it).
+        local function capture_shown_widgets()
+            local UIManager = require("ui/uimanager")
+            local shown_widgets, real_show = {}, UIManager.show
+            UIManager.show = function(_, widget) table.insert(shown_widgets, widget) end
+            return shown_widgets, function() UIManager.show = real_show end
+        end
+
+        it("asks before replacing a stored key and replaces it on confirmation", function()
+            local dialogs, restore = capture_shown_widgets()
+            local instance, _, saved = register_with({ status = 200, api_key = "new-key" }, nil, { api_key = "old-key" })
+            restore()
+
+            assert.same({}, saved)
+            assert.is_equal(1, #dialogs)
+            dialogs[1].ok_callback()
+            assert.same({ "new-key" }, saved)
+            assert.is_equal("new-key", instance.settings.api_key)
+        end)
+
+        it("keeps the stored key when the user declines the replacement", function()
+            local dialogs, restore = capture_shown_widgets()
+            local instance, shown, saved = register_with({ status = 200, api_key = "new-key" }, nil, { api_key = "old-key" })
+            restore()
+
+            dialogs[1].cancel_callback()
+            assert.same({}, saved)
+            assert.is_equal("old-key", instance.settings.api_key)
+            assert.same({ "Kept the existing API key. Registration cancelled." }, shown)
+        end)
+
+        it("asks before replacing whenever a key is stored", function()
+            local dialogs, restore = capture_shown_widgets()
+            local instance, _, saved = register_with({ status = 200, api_key = "same-key" }, nil, { api_key = "same-key" })
+            restore()
+
+            assert.is_equal(1, #dialogs)
+            dialogs[1].ok_callback()
+            assert.same({ "same-key" }, saved)
+            assert.is_equal("same-key", instance.settings.api_key)
         end)
 
         it("writes the api key to apikey.txt in the plugin directory", function()
