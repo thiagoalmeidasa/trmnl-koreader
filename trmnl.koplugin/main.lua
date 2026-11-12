@@ -1327,13 +1327,24 @@ end
 --============================================================================--
 
 --[[--
-Show configuration dialog for basic settings.
+Show configuration dialog for basic settings and BYOS registration.
 
 Uses MultiInputDialog which provides multiple input fields in one dialog:
 - API Key (password-masked text input)
 - Base URL (text input)
+- MAC header name (text input)
+- MAC address (text input, empty = auto-detect)
 
 Fields are retrieved via getFields() which returns array of values in order.
+
+Buttons:
+- Cancel: close without saving
+- Save: persist fields and close
+- Device model: open the model picker (the chosen model is only sent to the
+  server when registering)
+- Register: persist fields, close, then register the device with the
+  configured server (registerDevice guards apply: device model, base URL,
+  resolvable MAC - the MAC comes from the same field saved above)
 ]]
 function TrmnlDisplay:showConfigDialog()
     -- Get auto-detected MAC to show as placeholder/hint
@@ -1341,6 +1352,17 @@ function TrmnlDisplay:showConfigDialog()
     local mac_hint = auto_mac ~= "Auto-detect unavailable"
         and _("MAC address (leave empty to use:") .. auto_mac .. ")"
         or _("MAC address (auto-detect unavailable)")
+
+    -- Read the dialog fields into settings. Shared by Save and Register so
+    -- both buttons act on the same values.
+    local function apply_fields()
+        local fields = self.config_dialog:getFields()
+        self.settings.api_key = fields[1]
+        self.settings.base_url = fields[2]
+        self.settings.mac_header_name = fields[3]
+        self.settings.mac_address = fields[4] ~= "" and fields[4] or nil
+        self:saveSettings()
+    end
 
     self.config_dialog = MultiInputDialog:new {
         title = _("Configure TRMNL"),
@@ -1380,14 +1402,28 @@ function TrmnlDisplay:showConfigDialog()
                     text = _("Save"),
                     is_enter_default = true,
                     callback = function()
-                        local fields = self.config_dialog:getFields()
-                        self.settings.api_key = fields[1]
-                        self.settings.base_url = fields[2]
-                        self.settings.mac_header_name = fields[3]
-                        self.settings.mac_address = fields[4] ~= "" and fields[4] or nil
-                        self:saveSettings()
+                        apply_fields()
                         UIManager:close(self.config_dialog)
                         self:showInfo("TRMNL settings saved.")
+                    end,
+                },
+            },
+            {
+                {
+                    text = T(_("Device model: %1"), self:modelLabel(self.settings.device_model,
+                        self:loadModelsSnapshot()) or _("not chosen")),
+                    callback = function()
+                        self:showModelPicker()
+                    end,
+                },
+            },
+            {
+                {
+                    text = _("Register"),
+                    callback = function()
+                        apply_fields()
+                        UIManager:close(self.config_dialog)
+                        self:registerDevice()
                     end,
                 },
             },
@@ -1464,31 +1500,6 @@ function TrmnlDisplay:showModelPicker()
     })
 end
 
---[[--
-Ask for confirmation, then register the device with the configured server.
-]]
-function TrmnlDisplay:showRegisterConfirm()
-    if not self.settings.device_model or self.settings.device_model == "" then
-        self:showInfo("Pick a device model first.")
-        self:showModelPicker()
-        return
-    end
-
-    local snapshot = self:loadModelsSnapshot()
-    local model_label = self:modelLabel(self.settings.device_model, snapshot)
-
-    UIManager:show(ConfirmBox:new {
-        text = T(_("Register this device with %1?\n\nMAC: %2\nModel: %3"),
-            self.settings.base_url,
-            self:resolveMacAddress() or _("(none detected)"),
-            model_label),
-        ok_text = _("Register"),
-        ok_callback = function()
-            self:registerDevice()
-        end,
-    })
-end
-
 --============================================================================--
 -- Menu Builders
 --============================================================================--
@@ -1560,32 +1571,6 @@ function TrmnlDisplay:createConfigMenuItem()
     }
 end
 
-function TrmnlDisplay:createRegisterMenuItem()
-    return {
-        text = _("Register device (BYOS)"),
-        keep_menu_open = true,
-        callback = function()
-            self:showRegisterConfirm()
-        end
-    }
-end
-
-function TrmnlDisplay:createModelMenuItem()
-    return {
-        text_func = function()
-            local snapshot = self:loadModelsSnapshot()
-            local label = self:modelLabel(self.settings.device_model, snapshot)
-            local annotation = snapshot and snapshot.snapshot_date
-                and T(_(" (list from %1)"), snapshot.snapshot_date) or ""
-            return T(_("Device model: %1%2"), label or _("not chosen"), annotation)
-        end,
-        keep_menu_open = true,
-        callback = function()
-            self:showModelPicker()
-        end
-    }
-end
-
 function TrmnlDisplay:createAutoRefreshToggle()
     return self:createToggleMenuItem(
         "Stop dashboard",
@@ -1632,8 +1617,6 @@ function TrmnlDisplay:addToMainMenu(menu_items)
         sub_item_table = {
             self:createFetchMenuItem(),
             self:createConfigMenuItem(),
-            self:createRegisterMenuItem(),
-            self:createModelMenuItem(),
             self:createAutoRefreshToggle(),
             self:createNotificationsToggle(),
             {

@@ -58,6 +58,8 @@ This is the difference between a few days and a few weeks of runtime.
 | **MAC address header name** | Header the MAC is sent under. Defaults to `ID`, which is what TRMNL and most BYOS servers expect |
 | **MAC address** | Leave blank to auto-detect. Set it manually if detection fails or you need to send a specific value |
 
+The dialog also has a **Device model** button (the model is only sent to the server when registering a device on a BYOS server) and a **Register** button that provisions the device — see [Using Your Own Server](#using-your-own-server).
+
 How often the screen refreshes comes from the server: set it for the device on your TRMNL dashboard (or your BYOS server).
 
 Also in the **TRMNL Display** menu:
@@ -81,6 +83,8 @@ Binding *Fetch now* to a corner tap is a fast way to page through dashboards.
 Set **Base URL** to your server, for example `https://your-server.com`. The plugin calls `GET <base_url>/api/display` and expects a JSON body containing `image_url`, optionally with `refresh_rate` and `filename`.
 
 Requests include the device MAC under the header named in **MAC address header name** (`ID` by default). [Terminus](https://github.com/usetrmnl/terminus) and `byos_laravel` both read `id`, so the default works as-is. If your server expects something else, change the header name rather than patching the plugin.
+
+To provision the device on a Terminus-style server, open **Configure TRMNL**: set the base URL (and, if needed, the MAC), pick the device model, then tap **Register**. The server answers with an API key, which the plugin verifies and saves for you.
 
 **Terminus behavior notes**
 
